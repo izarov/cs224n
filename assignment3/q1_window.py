@@ -37,7 +37,7 @@ class Config:
     n_word_features = 2 # Number of features for every word in the input.
     window_size = 1 # The size of the window to use.
     ### YOUR CODE HERE
-    n_window_features = 0 # The total number of features used for each window.
+    n_window_features = n_word_features*(2*window_size+1) # The total number of features used for each window.
     ### END YOUR CODE
     n_classes = 5
     dropout = 0.5
@@ -97,7 +97,12 @@ def make_windowed_data(data, start, end, window_size = 1):
     windowed_data = []
     for sentence, labels in data:
     ### YOUR CODE HERE (5-20 lines)
-
+        for i in range(len(sentence)):
+            left_window = [start]*abs(min(0, i-window_size)) + sentence[i-window_size:i]
+            right_window = sentence[i+1:i+window_size+1] + [end]*max(0, (i+window_size+1-len(sentence)))
+            features = left_window + sentence[i:i+1] + right_window
+            flattened = [x for sublist in features for x in sublist]
+            windowed_data.append((flattened, labels[i]))
     ### END YOUR CODE
     return windowed_data
 
@@ -130,7 +135,9 @@ class WindowModel(NERModel):
         (Don't change the variable names)
         """
         ### YOUR CODE HERE (~3-5 lines)
-
+        self.input_placeholder = tf.placeholder(tf.int32, (None, self.config.n_window_features))
+        self.labels_placeholder = tf.placeholder(tf.int32, (None,))
+        self.dropout_placeholder = tf.placeholder(tf.float32)
         ### END YOUR CODE
 
     def create_feed_dict(self, inputs_batch, labels_batch=None, dropout=1):
@@ -153,7 +160,10 @@ class WindowModel(NERModel):
             feed_dict: The feed dictionary mapping from placeholders to values.
         """
         ### YOUR CODE HERE (~5-10 lines)
-         
+        feed_dict = {self.input_placeholder: inputs_batch,
+                     self.dropout_placeholder: dropout}
+        if labels_batch is not None:
+            feed_dict[self.labels_placeholder] = labels_batch
         ### END YOUR CODE
         return feed_dict
 
@@ -174,9 +184,9 @@ class WindowModel(NERModel):
             embeddings: tf.Tensor of shape (None, n_window_features*embed_size)
         """
         ### YOUR CODE HERE (!3-5 lines)
-                                                             
-                                  
-                                                                                                                 
+        embeddings_tensor = tf.Variable(self.pretrained_embeddings)
+        embeddings = tf.nn.embedding_lookup(embeddings_tensor, self.input_placeholder)
+        embeddings = tf.reshape(embeddings, (-1, self.config.n_window_features*self.config.embed_size))
         ### END YOUR CODE
         return embeddings
 
@@ -207,7 +217,15 @@ class WindowModel(NERModel):
         x = self.add_embedding()
         dropout_rate = self.dropout_placeholder
         ### YOUR CODE HERE (~10-20 lines)
-
+        W = tf.get_variable("W", (self.config.n_window_features*self.config.embed_size, self.config.hidden_size),
+                            tf.float32, initializer=tf.contrib.layers.xavier_initializer())
+        U = tf.get_variable("U", (self.config.hidden_size, self.config.n_classes),
+                            tf.float32, initializer=tf.contrib.layers.xavier_initializer())
+        b1 = tf.Variable(tf.zeros((self.config.hidden_size,)), name='b1')
+        b2 = tf.Variable(tf.zeros((self.config.n_classes,)), name='b2')
+        h = tf.nn.relu(tf.matmul(x, W)+b1)
+        h_drop = tf.nn.dropout(h, dropout_rate)
+        pred = tf.matmul(h_drop, U) + b2
         ### END YOUR CODE
         return pred
 
@@ -225,7 +243,7 @@ class WindowModel(NERModel):
             loss: A 0-d tensor (scalar)
         """
         ### YOUR CODE HERE (~2-5 lines)
-                                   
+        loss = tf.reduce_mean(tf.nn.sparse_softmax_cross_entropy_with_logits(logits=pred, labels=self.labels_placeholder))
         ### END YOUR CODE
         return loss
 
@@ -249,7 +267,7 @@ class WindowModel(NERModel):
             train_op: The Op for training.
         """
         ### YOUR CODE HERE (~1-2 lines)
-
+        train_op = tf.train.AdamOptimizer(self.config.lr).minimize(loss)
         ### END YOUR CODE
         return train_op
 
@@ -480,7 +498,7 @@ if __name__ == "__main__":
     command_parser.set_defaults(func=do_shell)
 
     ARGS = parser.parse_args()
-    if ARGS.func is None:
+    if not hasattr(ARGS, 'func') or ARGS.func is None:
         parser.print_help()
         sys.exit(1)
     else:
